@@ -8,6 +8,8 @@
 // sim.hpp, header file for the main simulation part of the Random 3D Ising model
 // Will eventually have two replicas so we can calculate the entanglement entropy
 
+#define NUM_AVG 5
+
 #include <string>
 #include <fstream>
 #include <iostream>
@@ -61,8 +63,15 @@ class Sim{
         double Energy; // Total energy
         int reverse; // Variable for calculating the regions in reverse size, since we lack symmetry
         int getAdj(int spin, int num); // Gets one of the 6 neighbours of a site
+        int getBond(int spin, int num); // Gets one of the 6 bonds of a site
+        int inA(int s); // Checks if a spin is in regionA
+        observable<double>* obs_E;
+        observable<long double>* obs_ratio;
+        double factor;
+        int nfac;
     public:
-        Sim(double _beta=0.1); //Default constructor
+        Sim(double _beta=1.0); //Default constructor
+        Sim(double _beta, Eigen::Matrix<int, Eigen::Dynamic, 1> _Jmat, MTRand* _rand);
         int sweeps; // Number of MC sweeps per bin
         int bins; // Number of total bins
         void singleUpdate(); // Single spin update attempt
@@ -70,7 +79,52 @@ class Sim{
         void loadJ();
         void addNeighbours(int z, int zz, int& s);
         void clusterUpdate(); // Swendsen-Wang update
+        Eigen::Matrix<int, Eigen::Dynamic, 1> getJ();
+        MTRand* getRand();
+        void updateE();
+        double getE();
+        void setE(double newE);
+        double getB();
+        Eigen::Matrix<int, Eigen::Dynamic, 2> getSpins();
+        void setSpins(Eigen::Matrix<int, Eigen::Dynamic, 2> _spins);
+        int getNspins();
+        void updateBinder();
+        void updateRatio(int warmup=0);
+        void resetFac();
+        void printFac();
 };
+
+int Sim::getNspins(){
+    return Nspins;
+}
+
+Eigen::Matrix<int, Eigen::Dynamic, 1> Sim::getJ(){
+    return Jmat;
+}
+
+MTRand* Sim::getRand(){
+    return rand;
+}
+
+double Sim::getE(){
+    return Energy;
+}
+
+void Sim::setE(double newE){
+    Energy = newE;
+}
+
+double Sim::getB(){
+    return beta;
+}
+
+Eigen::Matrix<int, Eigen::Dynamic, 2> Sim::getSpins(){
+    return spins;
+}
+
+void Sim::setSpins(Eigen::Matrix<int, Eigen::Dynamic, 2> _spins){
+    spins = _spins;
+}
 
 int Sim::inA(int s){
     // Given a site, returns whether this site is in regionA, using the internally stored value of regionA
@@ -95,6 +149,8 @@ int Sim::inA(int s){
 }
 
 Sim::Sim(double _beta){
+    factor = 0.0;
+    nfac = 0;
     loadParams();
     beta = _beta;
     Padd = 1. - exp(-2*beta); // Probability of adding a spin when they are satisfied for the cluster move
@@ -102,14 +158,19 @@ Sim::Sim(double _beta){
     Nspins = L*L*L;
     Nbonds = 3*Nspins;
     spins.resize(Nspins,2);
-    cluster.resize(Nspins,2)
+    cluster.resize(Nspins,2);
+    obs_E = new observable<double>("E_"+std::to_string(beta),bufferSize,binSize,0);
+    obs_ratio = new observable<long double>("ratio_"+std::to_string(beta),bufferSize,binSize,0);
     for(int i=0;i<Nspins;i++){
-        spins(i,0) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+        //spins(i,0) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+        spins(i,0) = 1; 
         if (inA(i)){
-            spins(i,1) = spins(i,0); // spins must match in region A
+            //spins(i,1) = spins(i,0); // spins must match in region A
+            spins(i,1) = 1; // spins must match in region A
         }
         else{
-            spins(i,1) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+            //spins(i,1) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+            spins(i,1) = 1; // +- 1 random initial state
         }
     }
     Jmat.resize(Nbonds);
@@ -121,6 +182,56 @@ Sim::Sim(double _beta){
             Jmat(i) = -1; // Usually we are ferromagnetic
         }
     }
+    if(DEBUG){
+        std::cout << Jmat.transpose() << std::endl;
+    }
+    if(true){
+        //Checking getAdj and getBond functions
+        for(int i=0;i<Nspins;i++){
+            assert(std::cout << "Checking bonds" << std::endl);
+            assert(i == getAdj(getAdj(i,0),3));
+            assert(i == getAdj(getAdj(i,1),4));
+            assert(i == getAdj(getAdj(i,2),5));
+            assert(i == getAdj(getAdj(i,3),0));
+            assert(i == getAdj(getAdj(i,4),1));
+            assert(i == getAdj(getAdj(i,5),2));
+            assert(getBond(i,0) == getBond(getAdj(i,0),3));
+            assert(getBond(i,1) == getBond(getAdj(i,1),4));
+            assert(getBond(i,2) == getBond(getAdj(i,2),5));
+            assert(getBond(i,3) == getBond(getAdj(i,3),0));
+            assert(getBond(i,4) == getBond(getAdj(i,4),1));
+            assert(getBond(i,5) == getBond(getAdj(i,5),2));
+        }
+    }
+}
+
+Sim::Sim(double _beta, Eigen::Matrix<int, Eigen::Dynamic, 1> _Jmat, MTRand* _rand){
+    factor = 0.0;
+    nfac = 0;
+    loadParams();
+    beta = _beta;
+    rand = _rand;
+    Padd = 1. - exp(-2*beta); // Probability of adding a spin when they are satisfied for the cluster move
+    rand = new MTRand(seed);
+    Nspins = L*L*L;
+    Nbonds = 3*Nspins;
+    spins.resize(Nspins,2);
+    cluster.resize(Nspins,2);
+    obs_E = new observable<double>("E_"+std::to_string(beta),bufferSize,binSize,0);
+    obs_ratio = new observable<long double>("ratio_"+std::to_string(beta),bufferSize,binSize,0);
+    for(int i=0;i<Nspins;i++){
+        //spins(i,0) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+        spins(i,0) = 1; // +- 1 random initial state
+        if (inA(i)){
+            //spins(i,1) = spins(i,0); // spins must match in region A
+            spins(i,1) = 1; // spins must match in region A
+        }
+        else{
+            //spins(i,1) = rand->randInt(1)*2 - 1; // +- 1 random initial state
+            spins(i,1) = 1; // +- 1 random initial state
+        }
+    }
+    Jmat = _Jmat;
     if(DEBUG){
         std::cout << Jmat.transpose() << std::endl;
     }
@@ -140,7 +251,6 @@ void Sim::loadParams(){
     if(DEBUG){
         std::cout << "L = " << L << std::endl;
         std::cout << "P = " << P << std::endl;
-        std::cout << "beta = " << beta << std::endl;
         std::cout << "seed = " << seed << std::endl;
         std::cout << "sweeps = " << sweeps << std::endl;
         std::cout << "bins = " << bins << std::endl;
@@ -156,32 +266,32 @@ int Sim::getAdj(int s, int n){
     if(n==0){
         // Spin right
         if((s%L)==(L-1)) return s+1-L;
-        else return s+1;
+        return s+1;
     }
     else if(n==1){
-        // Spin left
-        if((s%L)==0) return s-1+L;
-        else return s-1
-    }
-    else if(n==2){
         // Spin up
         if(((s/L)%L)==(L-1)) return s+L-L*L;
-        else return s+L;
+        return s+L;
     }
-    else if(n==3){
-        // Spin down
-        if(((s/L)%L)==0) return s-L+L*L;
-        else return s-L;
-    }
-    else if(n==4){
+    else if(n==2){
         // Spin up one layer
         if(((s/L/L)%L)==(L-1)) return s+L*L-L*L*L;
-        else return s+L*L;
+        return s+L*L;
+    }
+    else if(n==3){
+        // Spin left
+        if((s%L)==0) return s-1+L;
+        return s-1;
+    }
+    else if(n==4){
+        // Spin down
+        if(((s/L)%L)==0) return s-L+L*L;
+        return s-L;
     }
     else if(n==5){
         // Spin down one layer
         if(((s/L/L)%L)==0) return s-L*L+L*L*L;
-        else return s-L*L;
+        return s-L*L;
     }
 }
 
@@ -193,16 +303,16 @@ int Sim::getBond(int s, int n){
         return 3*s+0;
     }
     else if(n==1){
-        return 3*getAdj(s,1)+0;
-    }
-    else if(n==2){
         return 3*s+1;
     }
+    else if(n==2){
+        return 3*s+2;
+    }
     else if(n==3){
-        return 3*getAdj(s,3)+1;
+        return 3*getAdj(s,3)+0;
     }
     else if(n==4){
-        return 3*s+2;
+        return 3*getAdj(s,4)+1;
     }
     else if(n==5){
         return 3*getAdj(s,5)+2;
@@ -218,7 +328,7 @@ void Sim::singleUpdate(){
             field += spins(getAdj(z,i),0)*Jmat(getBond(z,i));
             field += spins(getAdj(z,i),1)*Jmat(getBond(z,i));
         }
-        if(rand->randExc() < exp(-2*spins(z,0)*field)){
+        if(rand->randExc() < exp(2*spins(z,0)*field*beta)){
             flip(spins(z,0));
             flip(spins(z,1));
         }
@@ -228,7 +338,7 @@ void Sim::singleUpdate(){
         for(int i=0;i<6;i++){
             field += spins(getAdj(z,i),layer)*Jmat(getBond(z,i));
         }
-        if(rand->randExc() < exp(-2*spins(z,0)*field)){
+        if(rand->randExc() < exp(2*spins(z,layer)*field*beta)){
             flip(spins(z,layer));
         }
     }
@@ -245,7 +355,7 @@ void Sim::addNeighbours(int z,int zz,int& s){ // Recursive part
         if(cluster(getAdj(z,i),zz)==1){ // Only try if it's not in the cluster
             if((spins(z,zz) * spins(getAdj(z,i),zz) * Jmat(getBond(z,i)))==-1){ // If the spins match ...
                 if(rand->randExc() < Padd){ // Probability to add
-                    addNeighbours(adjS(z,i),zz,s);
+                    addNeighbours(getAdj(z,i),zz,s);
                 }
             }
         }
@@ -257,32 +367,34 @@ void Sim::clusterUpdate(){
     int z = rand->randInt(Nspins-1);
     int zz = rand->randInt(1);
     cluster.fill(1); // No spins are in the cluster
-    if(DEBUG){
+    if(false){
         int s = 0;
         addNeighbours(z,zz,s);
         std::cout << s << std::endl;
-        for(int i=0;i<Nspins;i++){
+        /*
+        for(int i=0;i<2*Nspins;i++){
             if((i%L)==0) std::cout << std::endl;
             std::cout << std::setw(2);
             std::cout << cluster(i) << " ";
         }
         std::cout << std::endl;
+        */
     }
     else{
         int s = 0;
         addNeighbours(z,zz,s);
     }
-    // Now that it's finished, flip all spins in the cluster
-    // All elements in "cluster" are -1, and will flip spins in "spins"
-    if(DEBUG){
+    if(false){
         updateE();
         double tE1 = Energy;
         spins = spins.array() * cluster.array();
         updateE();
         double tE2 = Energy;
-        std::cout << "dE = " << (tE2 - tE1) << std::endl << std::endl;
+        if ((tE2-tE1)!= 0.0) std::cout << "dE = " << (tE2 - tE1) << std::endl;
     }
-    else spins = spins.array() * cluster.array();
+    // Now that it's finished, flip all spins in the cluster
+    // All elements in "cluster" are -1, and will flip spins in "spins"
+    spins = spins.array() * cluster.array();
 }
 
 void Sim::saveJ(){
@@ -307,12 +419,117 @@ void Sim::updateE(){
     Energy = 0;
     // Loop over spins
     for(int i=0;i<Nspins;i++){
-        // Loop over unique bonds, 2 per spin
+        // Loop over unique bonds, 3 per spin for 3D cubic lattice
         for(int b=0;b<3;b++){
             Energy += spins(i,0) * spins(getAdj(i,b),0) * Jmat(getBond(i,b));
             Energy += spins(i,1) * spins(getAdj(i,b),1) * Jmat(getBond(i,b));
         }
     }
+}
+
+void Sim::updateBinder(){
+    obs_E->pe(Energy);
+}
+
+void Sim::updateRatio(int warmup){
+    double field_1_top = 0; // 1 and 2 are the first and second spin of the transfer matrix
+    double field_2_top = 0; // While top and bot represent the two replicas
+    double field_1_bot = 0;
+    double field_2_bot = 0;
+    long double ttop = 0.0;
+    long double tbot = 0.0;
+    long double tcon = 0.0;
+    Eigen::Matrix<double, 2, 2> trans_prod_top;
+    Eigen::Matrix<double, 2, 2> trans_prod_bot;
+    Eigen::Matrix<double, 2, 2> trans_prod_con;
+    Eigen::Matrix<double, 2, 2> trans_mat;
+    int s1,s2;
+    for(int row=0;row<(L/2);row++){
+        trans_prod_top.setIdentity(2,2);
+        trans_prod_bot.setIdentity(2,2);
+        trans_prod_con.setIdentity(2,2);
+        for(int i=0;i<L;i++){
+            s1 = i + row*2*L + (regionA%2)*L + (regionA/2)*L*L;
+            int dir = 0;
+            if(reverse){
+                s1 = L*L*L - 1 - s1;
+                dir = 3;
+            }
+            if(i==0){
+                field_1_top = Jmat(getBond(s1,1)) * spins(getAdj(s1,1),0) + 
+                              Jmat(getBond(s1,2)) * spins(getAdj(s1,2),0) +
+                              Jmat(getBond(s1,4)) * spins(getAdj(s1,4),0) +
+                              Jmat(getBond(s1,5)) * spins(getAdj(s1,5),0);
+                field_1_bot = Jmat(getBond(s1,1)) * spins(getAdj(s1,1),1) + 
+                              Jmat(getBond(s1,2)) * spins(getAdj(s1,2),1) +
+                              Jmat(getBond(s1,4)) * spins(getAdj(s1,4),1) +
+                              Jmat(getBond(s1,5)) * spins(getAdj(s1,5),1);
+            }
+            else{
+                field_1_top = field_2_top;
+                field_1_bot = field_2_bot;
+            }
+            s2 = getAdj(s1,dir);
+            field_2_top = Jmat(getBond(s2,1)) * spins(getAdj(s2,1),0) + 
+                          Jmat(getBond(s2,2)) * spins(getAdj(s2,2),0) +
+                          Jmat(getBond(s2,4)) * spins(getAdj(s2,4),0) +
+                          Jmat(getBond(s2,5)) * spins(getAdj(s2,5),0);
+            field_2_bot = Jmat(getBond(s2,1)) * spins(getAdj(s2,1),1) + 
+                          Jmat(getBond(s2,2)) * spins(getAdj(s2,2),1) +
+                          Jmat(getBond(s2,4)) * spins(getAdj(s2,4),1) +
+                          Jmat(getBond(s2,5)) * spins(getAdj(s2,5),1);
+
+            trans_mat(0,0) = exp(-1.*beta*(Jmat(getBond(s1,dir)) + field_1_top/2. + field_2_top/2.));
+            trans_mat(0,1) = exp(-1.*beta*(-1.*Jmat(getBond(s1,dir)) + field_1_top/2. - field_2_top/2.));
+            trans_mat(1,0) = exp(-1.*beta*(-1.*Jmat(getBond(s1,dir)) - field_1_top/2. + field_2_top/2.));
+            trans_mat(1,1) = exp(-1.*beta*(Jmat(getBond(s1,dir)) - field_1_top/2. - field_2_top/2.));
+            trans_prod_top *= trans_mat;
+            ttop += log(trans_prod_top.maxCoeff());
+            trans_prod_top /= trans_prod_top.maxCoeff();
+
+            trans_mat(0,0) = exp(-1.*beta*(Jmat(getBond(s1,dir)) + field_1_bot/2. + field_2_bot/2.));
+            trans_mat(0,1) = exp(-1.*beta*(-1.*Jmat(getBond(s1,dir)) + field_1_bot/2. - field_2_bot/2.));
+            trans_mat(1,0) = exp(-1.*beta*(-1.*Jmat(getBond(s1,dir)) - field_1_bot/2. + field_2_bot/2.));
+            trans_mat(1,1) = exp(-1.*beta*(Jmat(getBond(s1,dir)) - field_1_bot/2. - field_2_bot/2.));
+            trans_prod_bot *= trans_mat;
+            tbot += log(trans_prod_bot.maxCoeff());
+            trans_prod_bot /= trans_prod_bot.maxCoeff();
+
+            trans_mat(0,0) = exp(-1.*beta*(2.*Jmat(getBond(s1,dir)) + field_1_top/2. + field_1_bot/2. + field_2_top/2. + field_2_bot/2.));
+            trans_mat(0,1) = exp(-1.*beta*(-2.*Jmat(getBond(s1,dir)) + field_1_top/2. + field_1_bot/2. - field_2_top/2. - field_2_bot/2.));
+            trans_mat(1,0) = exp(-1.*beta*(-2.*Jmat(getBond(s1,dir)) - field_1_top/2. - field_1_bot/2. + field_2_top/2. + field_2_bot/2.));
+            trans_mat(1,1) = exp(-1.*beta*(2.*Jmat(getBond(s1,dir)) - field_1_top/2. - field_1_bot/2. - field_2_top/2. - field_2_bot/2.));
+            trans_prod_con *= trans_mat;
+            tcon += log(trans_prod_con.maxCoeff());
+            trans_prod_con /= trans_prod_con.maxCoeff();
+        }
+        ttop += log(trans_prod_top.trace());
+        tbot += log(trans_prod_bot.trace());
+        tcon += log(trans_prod_con.trace());
+    }
+    //obs_ratio->pe(trans_prod_con.trace() / (trans_prod_top.trace() * trans_prod_bot.trace()));
+    //obs_ratio->pe(tcon / (ttop * tbot));
+    if (warmup==1){
+        factor += tcon - ttop - tbot;
+        nfac += 1;
+    }
+    else{
+        obs_ratio->pe(exp(tcon - ttop - tbot - factor));
+    }
+
+}
+
+void Sim::resetFac(){
+    factor = 0;
+    nfac = 0;
+}
+
+void Sim::printFac(){
+    factor /= nfac;
+    ofstream ffile;
+    ffile.open("fac_" + std::to_string(beta), std::ofstream::out | std::ofstream::app);
+    ffile << setprecision(20) << factor << std::endl;
+    ffile.close();
 }
 
 #endif //SIMHPP
