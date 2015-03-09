@@ -87,6 +87,7 @@ class Sim{
         double getE();
         void setE(double newE);
         double getB();
+        void setB(double newB);
         Eigen::Matrix<int, Eigen::Dynamic, 2> getSpins();
         void setSpins(Eigen::Matrix<int, Eigen::Dynamic, 2> _spins);
         int getNspins();
@@ -124,6 +125,10 @@ void Sim::setE(double newE){
 
 double Sim::getB(){
     return beta;
+}
+
+void Sim::setB(double newB){
+    beta = newB;
 }
 
 Eigen::Matrix<int, Eigen::Dynamic, 2> Sim::getSpins(){
