@@ -19,6 +19,7 @@
 #include "Eigen/Core"
 #include "stat.hpp"
 #include <assert.h>
+#include <vector>
 
 #define PI 3.1415926535897
 
@@ -54,24 +55,25 @@ class Sim{
         MTRand* rand; // MersenneTwister pseudorandom number generator
         int seed; // Seed for the random number generator
         int L; // Size of the lattice
-        int Nspins; // Derived from L above
         int Nbonds; // Derived from L above
         double P; // Probability of disorder bond, 0 = pure ferromagnet
         double beta; // Inverse temperature
-        int regionA; // Number of half sheets in regionA
         double Padd; // Probability of adding to a cluster
         double Energy; // Total energy
         int reverse; // Variable for calculating the regions in reverse size, since we lack symmetry
         int getAdj(int spin, int num); // Gets one of the 6 neighbours of a site
         int getBond(int spin, int num); // Gets one of the 6 bonds of a site
-        int inA(int s); // Checks if a spin is in regionA
         observable<double>* obs_E;
         observable<long double>* obs_ratio;
         double factor;
         int nfac;
+        int regionA; // Number of half sheets in regionA
+        int Nspins; // Derived from L above
+        int inA(int s); // Checks if a spin is in regionA
     public:
         Sim(double _beta=1.0); //Default constructor
         Sim(double _beta, Eigen::Matrix<int, Eigen::Dynamic, 1> _Jmat, MTRand* _rand);
+        Sim& operator=(const Sim& rh);
         int sweeps; // Number of MC sweeps per bin
         int bins; // Number of total bins
         void singleUpdate(); // Single spin update attempt
@@ -93,6 +95,12 @@ class Sim{
         void resetFac();
         void printFac();
 };
+
+Sim& Sim::operator=(const Sim& rh){
+    Energy = rh.Energy;
+    spins = rh.spins;
+    return *this;
+}
 
 int Sim::getNspins(){
     return Nspins;
@@ -130,15 +138,13 @@ int Sim::inA(int s){
     // Given a site, returns whether this site is in regionA, using the internally stored value of regionA
     // For each integer value of regionA, half a sheet of sites is added. So for an LxLxL system, regionA
     // varies from zero to 2L, where the number of layers in regionA is N/2
+    if (regionA==0) return 0; // If there is no regionA, you are never in it
     if (reverse==1) s = L*L*L-1-s;
-    if (s>((regionA/2+1)*L*L)){
+    if (s>=(((regionA-1)/2+1)*L*L)){
         return 0;
     }
     else if(s<((regionA/2)*L*L)){
         return 1;
-    }
-    else if((regionA%2)==0){
-        return 0;
     }
     // Interesting case, in the layer being added, and half the layer has been added so far
     // since regionA%2==1
