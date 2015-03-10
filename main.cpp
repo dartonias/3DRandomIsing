@@ -107,6 +107,10 @@ int main(int argc, char** argv){
             double fulldB = simVec[num_temps-1].getB() - simVec[0].getB();
             double tdB = 0;
             for(int z=0;z<num_temps-1;z++){
+                // After this, the simHist values have mean 1 by construction
+                // Larger values are where the simulation had a high swapping probability
+                // and so we move those temperatures further apart
+                // Smaller values had a lower swapping probability, so we move them closer together
                 simHist[z] /= sum;
                 tdB += deltaB[z] * simHist[z];
             }
