@@ -27,7 +27,7 @@
 
 bool fexists(const char* filename){
     ifstream ifile(filename);
-    return ifile;
+    return (bool) ifile;
 }
 
 void getTemps(vector<double>& temps){

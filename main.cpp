@@ -116,7 +116,6 @@ int main(int argc, char** argv){
                 newTemps << simVec[z].getB() << std::endl;
             }
             newTemps << simVec[num_temps-1].getB() << std::endl;
-            std::cout << sum << std::endl;
             acceptance << sum << std::endl;
         }
         simHist.assign(num_temps-1,0);
