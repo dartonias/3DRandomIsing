@@ -1,6 +1,6 @@
 bmin = 0.0125
 bmax = 1.37
-N = 61
+N = 31*8
 b = [(bmax-bmin)*i/N + bmin for i in range(N+1)]
 
 b = list(set(b))
